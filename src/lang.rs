@@ -43,7 +43,9 @@ mod th;
 mod tr;
 mod tw;
 mod uk;
-mod vn;
+mod vi;
+mod ta;
+mod ge;
 
 pub const LANGS: &[(&str, &str)] = &[
     ("en", "English"),
@@ -68,7 +70,7 @@ pub const LANGS: &[(&str, &str)] = &[
     ("da", "Dansk"),
     ("eo", "Esperanto"),
     ("tr", "Türkçe"),
-    ("vn", "Tiếng Việt"),
+    ("vi", "Tiếng Việt"),
     ("pl", "Polski"),
     ("ja", "日本語"),
     ("ko", "한국어"),
@@ -89,6 +91,8 @@ pub const LANGS: &[(&str, &str)] = &[
     ("he", "עברית"),
     ("hr", "Hrvatski"),
     ("sc", "Sardu"),
+    ("ta", "தமிழ்"),
+    ("ge", "ქართული"),
 ];
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -141,7 +145,7 @@ pub fn translate_locale(name: String, locale: &str) -> String {
         "cs" => cs::T.deref(),
         "da" => da::T.deref(),
         "sk" => sk::T.deref(),
-        "vn" => vn::T.deref(),
+        "vi" => vi::T.deref(),
         "pl" => pl::T.deref(),
         "ja" => ja::T.deref(),
         "ko" => ko::T.deref(),
@@ -164,6 +168,8 @@ pub fn translate_locale(name: String, locale: &str) -> String {
         "he" => he::T.deref(),
         "hr" => hr::T.deref(),
         "sc" => sc::T.deref(),
+        "ta" => ta::T.deref(),
+        "ge" => ge::T.deref(),
         _ => en::T.deref(),
     };
     let (name, placeholder_value) = extract_placeholder(&name);
