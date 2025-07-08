@@ -427,7 +427,8 @@ impl ClipboardContext {
                 // It's not correct in the server process.
                 #[cfg(target_os = "linux")]
                 let is_kde_x11 = {
-                    let is_kde = std::process::Command::new("sh")
+                    use hbb_common::platform::linux::CMD_SH;
+                    let is_kde = std::process::Command::new(CMD_SH.as_str())
                         .arg("-c")
                         .arg("ps -e | grep -E kded[0-9]+ | grep -v grep")
                         .stdout(std::process::Stdio::piped())
@@ -463,7 +464,7 @@ pub fn is_support_multi_clipboard(peer_version: &str, peer_platform: &str) -> bo
     if get_version_number(peer_version) < get_version_number("1.3.0") {
         return false;
     }
-    if ["", &whoami::Platform::Ios.to_string()].contains(&peer_platform) {
+    if ["", &hbb_common::whoami::Platform::Ios.to_string()].contains(&peer_platform) {
         return false;
     }
     if "Android" == peer_platform && get_version_number(peer_version) < get_version_number("1.3.3")
