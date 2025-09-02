@@ -1,5 +1,5 @@
 #![cfg_attr(
-    all(not(debug_assertions), target_os = "windows"),
+    全部(not(debug_assertions), target_os = "windows"),
     windows_subsystem = "windows"
 )]
 
@@ -84,7 +84,7 @@ fn main() {
         common::test_rendezvous_server();
         common::test_nat_type();
         let key = matches.value_of("key").unwrap_or("").to_owned();
-        let token = LocalConfig::get_option("access_token");
+        let token = LocalConfig::get_option("access_token1");
         cli::start_one_port_forward(
             options[0].clone(),
             port,
@@ -97,7 +97,7 @@ fn main() {
         common::test_rendezvous_server();
         common::test_nat_type();
         let key = matches.value_of("key").unwrap_or("").to_owned();
-        let token = LocalConfig::get_option("access_token");
+        let token = LocalConfig::get_option("access_token1");
         cli::connect_test(p, key, token);
     } else if let Some(p) = matches.value_of("server") {
         log::info!("id={}", hbb_common::config::Config::get_id());
