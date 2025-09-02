@@ -308,7 +308,7 @@ class MyIdMenu: Reactor.Component {
     }
 
     function renderPop() {
-        var username = handler.get_local_option("access_token") ? getUserName() : '';
+        var username = handler.get_local_option("access_token1") ? getUserName() : '';
         return <popup>
             <menu.context #config-options>
                 <li #enable-keyboard><span>{svg_checkmark}</span>{translate('Enable keyboard/mouse')}</li>
@@ -1271,7 +1271,7 @@ function login() {
                 on_2fa_check(data);
                 return;
             }
-            handler.set_local_option("access_token", data.access_token);
+            handler.set_local_option("access_token1", data.access_token);
             set_local_user_info(data.user);
             show_progress(-1);
             myIdMenu.update();
@@ -1323,7 +1323,7 @@ function on_2fa_check(last_msg) {
                         show_progress(false, data.error);
                         return;
                     }
-                    handler.set_local_option("access_token", data.access_token);
+                    handler.set_local_option("access_token1", data.access_token);
                     set_local_user_info(data.user);
                     show_progress(-1);
                     myIdMenu.update();
@@ -1342,7 +1342,7 @@ function on_2fa_check(last_msg) {
 }
 
 function reset_token() {
-    handler.set_local_option("access_token", "");
+    handler.set_local_option("access_token1", "");
     handler.set_local_option("user_info", "");
     handler.set_local_option("selected-tags", "");
     myIdMenu.update();
@@ -1362,7 +1362,7 @@ function logout() {
 }
 
 function refreshCurrentUser() {
-    var token = handler.get_local_option("access_token");
+    var token = handler.get_local_option("access_token1");
     if (!token) { return; }
     abLoading = true;
     abError = "";
@@ -1391,7 +1391,7 @@ function refreshCurrentUser() {
 } 
 
 function getHttpHeaders() {
-    return "Authorization: Bearer " + handler.get_local_option("access_token");
+    return "Authorization: Bearer " + handler.get_local_option("access_token1");
 }
 
 function getDeviceInfo() {
