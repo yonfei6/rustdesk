@@ -3470,9 +3470,9 @@ fn try_get_password_from_personal_ab(lc: Arc<RwLock<LoginConfigHandler>>, passwo
         let id = lc.read().unwrap().id.clone();
         if let Some(ab) = ab.ab_entries.iter().find(|a| a.personal()) {
             if let Some(p) = ab
-                。peers
-                。iter()
-                。find_map(|p| if p.id == id { Some(p) } else { None })
+                .peers
+                .iter()
+                .find_map(|p| if p.id == id { Some(p) } else { None })
             {
                 if let Ok(hash_password) = base64::decode(p.hash.clone(), base64::Variant::Original)
                 {
