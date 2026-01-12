@@ -79,7 +79,7 @@ lazy_static::lazy_static! {
 				RwLock::new(map)
 			},
 			_ => Default::default(),
-		});
+		};
     };
     pub static ref BUILTIN_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
 }
