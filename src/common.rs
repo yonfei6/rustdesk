@@ -190,7 +190,7 @@ pub fn is_support_file_transfer_resume_num(ver: i64) -> bool {
 
 /// Minimum server version required for relative mouse mode support.
 /// This constant must mirror Flutter's `kMinVersionForRelativeMouseMode` in `consts.dart`.
-const MIN_VERSION_RELATIVE_MOUSE_MODE: &str = "1.4.5.sjfedu";
+const MIN_VERSION_RELATIVE_MOUSE_MODE: &str = "1.4.5";
 
 #[inline]
 pub fn is_support_relative_mouse_mode(ver: &str) -> bool {
