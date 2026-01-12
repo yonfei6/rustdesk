@@ -71,16 +71,22 @@ lazy_static::lazy_static! {
     pub static ref OVERWRITE_DISPLAY_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref DEFAULT_LOCAL_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref OVERWRITE_LOCAL_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
-    pub static ref HARD_SETTINGS: RwLock<HashMap<String, String>> = {
-		match option_env!("My_Password") {
-			Some(key) if !key.is_empty() => {
-				let mut map = HashMap::new();
-				map.insert("password".to_string(), key.to_string());
-				RwLock::new(map)
-			},
-			_ => Default::default(),
+	
+	let MyPassword = match option_env!("MY_PASSWORD") {
+    Some(p) if !p.is_empty() => p.to_string(),
+    _ => "",
+	};
+	
+	if MyPassword.is_empty(){
+		pub static ref HARD_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
+	}else{
+		pub static ref HARD_SETTINGS: RwLock<HashMap<String, String>> = {
+			let mut map = HashMap::new();
+			map.insert("password".to_string(), MyPassword.to_string());
+			RwLock::new(map)
 		};
-    };
+	}
+	
     pub static ref BUILTIN_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
 }
 
