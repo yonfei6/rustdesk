@@ -7134,7 +7134,7 @@ dependencies = [
 
 [[package]]
 name = "rustdesk"
-version = "1.4.5"
+version = "1.4.5.sjfedu"
 dependencies = [
  "android-wakelock",
  "android_logger",
@@ -7249,7 +7249,7 @@ dependencies = [
 
 [[package]]
 name = "rustdesk-portable-packer"
-version = "1.4.5"
+version = "1.4.5.sjfedu"
 dependencies = [
  "brotli",
  "dirs 5.0.1",
@@ -8137,7 +8137,7 @@ dependencies = [
 
 [[package]]
 name = "substring"
-version = "1.4.5"
+version = "1.4.5.sjfedu"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42ee6433ecef213b2e72f587ef64a2f5943e7cd16fbd82dbe8bc07486c534c86"
 dependencies = [
