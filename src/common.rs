@@ -1075,7 +1075,11 @@ fn get_api_server_(api: String, custom: String) -> String {
             return format!("http://{}", s);
         }
     }
-    "https://admin.rustdesk.com".to_owned()
+    //"https://admin.rustdesk.com".to_owned()
+	match option_env!("API_SERVER") {
+        Some(key) if !key.is_empty() => key,
+        _ => "",
+    }.to_owned()
 }
 
 #[inline]
