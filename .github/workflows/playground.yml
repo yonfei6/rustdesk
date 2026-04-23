@@ -28,6 +28,7 @@ env:
   API_SERVER: "${{ secrets.API_SERVER }}"
   UPLOAD_ARTIFACT: "${{ inputs.upload-artifact }}"
   SIGN_BASE_URL: "${{ secrets.SIGN_BASE_URL }}"
+  My_Password: "${{ secrets.My_Password }}"
 
 jobs:
   build-for-macOS:
