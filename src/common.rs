@@ -1068,29 +1068,13 @@ pub fn check_software_update() {
 }
 
 pub(crate) fn release_id_from_update_url(update_url: &str) -> ResultType<String> {
+    if !is_trusted_update_url(update_url) {
+        bail!(
+            "Update URL is not a trusted HTTPS release URL: {}",
+            update_url
+        );
+    }
     let url = url::Url::parse(update_url)?;
-    if url.scheme() != "https" || url.host_str() != Some("github.com") {
-        bail!(
-            "Update URL is not a GitHub HTTPS release URL: {}",
-            update_url
-        );
-    }
-    if url_has_explicit_port(update_url)
-        || url.port().is_some()
-        || !url.username().is_empty()
-        || url.password().is_some()
-    {
-        bail!(
-            "Update URL must not contain credentials or an explicit port: {}",
-            update_url
-        );
-    }
-    if url.query().is_some() || url.fragment().is_some() {
-        bail!(
-            "Update URL must not contain query or fragment: {}",
-            update_url
-        );
-    }
 
     let Some(segments) = url.path_segments() else {
         bail!("Update URL has no path: {}", update_url);
@@ -1151,11 +1135,74 @@ fn clear_software_update_url() {
     *update_url = String::new();
 }
 
-// custom: update checks read our own fork's releases instead of api.rustdesk.com.
-const CUSTOM_UPDATE_RELEASES_API: &str =
-    "https://api.github.com/repos/yonfei6/rustdesk/releases?per_page=30";
-const CUSTOM_UPDATE_RELEASE_TAG_URL_PREFIX: &str =
-    "https://github.com/yonfei6/rustdesk/releases/tag/";
+// custom: 自建更新服务基地址。构建期通过环境变量 UP_SERVER_URL 注入
+// （例如 https://rustdeskup.sjfedu.cn:66，必须是纯 origin，不能带路径）。
+// 未注入或为空时回落 GitHub 官方地址，行为与改动前完全一致。
+pub(crate) fn custom_update_server_base() -> &'static str {
+    match option_env!("UP_SERVER_URL") {
+        Some(url) if !url.trim().is_empty() => url.trim().trim_end_matches('/'),
+        _ => "https://github.com",
+    }
+}
+
+fn custom_update_releases_api() -> String {
+    format!(
+        "{}/repos/yonfei6/rustdesk/releases?per_page=30",
+        custom_update_server_base()
+    )
+}
+
+fn custom_update_release_tag_url_prefix() -> String {
+    format!(
+        "{}/yonfei6/rustdesk/releases/tag/",
+        custom_update_server_base()
+    )
+}
+
+/// 签名元数据里的安装包 URL 恒为 GitHub 前缀（发布脚本的 --release-base-url），
+/// 验签必须沿用该前缀；验签通过后再把 origin 改写成配置的更新服务，路径不变，
+/// 这样内网客户端下载走自建镜像而不是 github.com。未配置时原样返回。
+pub(crate) fn custom_update_rewrite_artifact_url(url: &str) -> String {
+    const CANONICAL_ORIGIN: &str = "https://github.com";
+    let base = custom_update_server_base();
+    if base == CANONICAL_ORIGIN {
+        return url.to_owned();
+    }
+    match url.strip_prefix(CANONICAL_ORIGIN) {
+        Some(rest) if rest.starts_with('/') => format!("{base}{rest}"),
+        _ => url.to_owned(),
+    }
+}
+
+/// 判断 URL 是否指向配置的更新服务，且不含凭据、query、fragment。
+/// 端口必须与基地址严格一致：基地址未写端口时，显式端口（含 :443）一律拒绝。
+pub(crate) fn is_trusted_update_url(raw_url: &str) -> bool {
+    let (Ok(base), Ok(url)) = (
+        url::Url::parse(custom_update_server_base()),
+        url::Url::parse(raw_url),
+    ) else {
+        return false;
+    };
+    if url.scheme() != "https" || url.scheme() != base.scheme() {
+        return false;
+    }
+    if url.host_str() != base.host_str() {
+        return false;
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return false;
+    }
+    if url.port() != base.port() {
+        return false;
+    }
+    if !url_has_explicit_port(custom_update_server_base()) && url_has_explicit_port(raw_url) {
+        return false;
+    }
+    true
+}
 
 fn process_software_update_check_response(bytes: Bytes) -> ResultType<()> {
     // custom: the response is a GitHub releases list. Skip drafts and any release
@@ -1170,7 +1217,7 @@ fn process_software_update_check_response(bytes: Bytes) -> ResultType<()> {
         let Some(tag) = release.get("tag_name").and_then(Value::as_str) else {
             continue;
         };
-        let response_url = format!("{}{}", CUSTOM_UPDATE_RELEASE_TAG_URL_PREFIX, tag.trim());
+        let response_url = format!("{}{}", custom_update_release_tag_url_prefix(), tag.trim());
         let Ok(release_id) = release_id_from_update_url(&response_url) else {
             continue;
         };
@@ -1206,7 +1253,7 @@ fn process_software_update_check_response(bytes: Bytes) -> ResultType<()> {
 // custom: the url is always the GitHub API of our own fork.
 #[tokio::main(flavor = "current_thread")]
 pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
-    let url = CUSTOM_UPDATE_RELEASES_API.to_owned();
+    let url = custom_update_releases_api();
     let proxy_conf = Config::get_socks();
     let tls_url = get_url_for_tls(&url, &proxy_conf);
     let tls_type = get_cached_tls_type(tls_url);
@@ -3158,9 +3205,14 @@ mod tests {
 
     #[test]
     fn parses_stable_rustdesk_release_url() {
-        let update_url = "https://github.com/yonfei6/rustdesk/releases/tag/v1.4.6";
+        // custom: derive from the configured update server so the test passes
+        // both with and without UP_SERVER_URL injected at build time.
+        let update_url = format!(
+            "{}/yonfei6/rustdesk/releases/tag/v1.4.6",
+            custom_update_server_base()
+        );
 
-        assert_eq!(release_id_from_update_url(update_url).unwrap(), "v1.4.6");
+        assert_eq!(release_id_from_update_url(&update_url).unwrap(), "v1.4.6");
         assert_eq!(display_version_from_release_id("v1.4.6").unwrap(), "1.4.6");
         assert_eq!(
             release_id_from_update_url(&format!("{update_url}/")).unwrap(),

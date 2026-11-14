@@ -26,6 +26,9 @@ env:
   RS_PUB_KEY: "${{ secrets.RS_PUB_KEY }}"
   RENDEZVOUS_SERVER: "${{ secrets.RENDEZVOUS_SERVER }}"
   API_SERVER: "${{ secrets.API_SERVER }}"
+  # custom: 自建更新服务地址（纯 origin，如 https://rustdeskup.sjfedu.cn:66），
+  # 编译期由 option_env!("UP_SERVER_URL") 读取；为空则回落 GitHub。
+  UP_SERVER_URL: "${{ secrets.UP_SERVER_URL }}"
   SCITER_RUST_VERSION: "1.75" # https://github.com/rustdesk/rustdesk/discussions/7503, also 1.78 has ABI change which causes our sciter version not working, https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
   RUST_VERSION: "1.75" # sciter failed on m1 with 1.78 because of https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
   MAC_RUST_VERSION: "1.81" # 1.81 is requred for macos, because of https://github.com/yury/cidre requires 1.81
@@ -58,7 +61,7 @@ env:
   VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
   VCPKG_CMAKE_VERSION: "4.3.0"
   ARMV7_VCPKG_COMMIT_ID: "6f29f12e82a8293156836ad81cc9bf5af41fe836" # 2025.01.13, got "/opt/artifacts/vcpkg/vcpkg: No such file or directory" with latest version
-  VERSION: "1.5.4"
+  VERSION: "1.5.5"
   NDK_VERSION: "r28c"
   #signing keys env variable checks
   ANDROID_SIGNING_KEY: "${{ secrets.ANDROID_SIGNING_KEY }}"
@@ -2206,6 +2209,9 @@ jobs:
                 sed -i "s/linux\/x64/linux\/arm64/g" ./res/rpm-flutter.spec
                 ;;
             esac
+            # custom: spec 里的 Version 是硬编码的，不跟 VERSION 走，
+            # 否则 1.5.4 的 rpm 包名仍是 rustdesk-1.5.3-0.*.rpm，Linux 用户看不到升级
+            sed -i "s/^Version:.*/Version:    ${VERSION}/" ./res/rpm-flutter.spec ./res/rpm-flutter-suse.spec
             HBB=`pwd` rpmbuild ./res/rpm-flutter.spec -bb
             pushd ~/rpmbuild/RPMS/${{ matrix.job.arch }}
             for name in rustdesk*??.rpm; do

@@ -106,10 +106,15 @@ pub(super) fn verified_update_artifact_from_release_page_url(
 ) -> ResultType<VerifiedUpdateArtifact> {
     let release_id = release_id_from_update_url(update_url)?;
     let display_version = display_version_from_release_id(&release_id)?;
-    // custom: artifacts are published on our own fork's releases.
+    // custom: 元数据里签的是 GitHub 前缀的安装包 URL（发布脚本 --release-base-url），
+    // 因此精确前缀校验必须用 GitHub 前缀；下载地址在验签后再改写到自建镜像。
     let expected_artifact_url_prefix =
         format!("https://github.com/yonfei6/rustdesk/releases/download/{release_id}/");
-    let metadata_url = format!("{expected_artifact_url_prefix}rustdesk-update.json");
+    // 元数据和签名本身从配置的更新服务取。
+    let metadata_url = format!(
+        "{}/yonfei6/rustdesk/releases/download/{release_id}/rustdesk-update.json",
+        crate::common::custom_update_server_base()
+    );
     let signature_url = format!("{metadata_url}.sig");
     let metadata_bytes = fetch_update_sidecar_bytes(&metadata_url)?;
     let signature_bytes = fetch_update_sidecar_bytes(&signature_url)?;
@@ -119,7 +124,14 @@ pub(super) fn verified_update_artifact_from_release_page_url(
         expected_artifact_url_prefix: expected_artifact_url_prefix.as_str(),
         artifact: *query,
     };
-    crate::update_metadata::verify_update_metadata(&metadata_bytes, &signature_bytes, requirements)
+    let mut artifact = crate::update_metadata::verify_update_metadata(
+        &metadata_bytes,
+        &signature_bytes,
+        requirements,
+    )?;
+    // custom: 验签通过后把安装包 URL 的 origin 改写到配置的更新服务。
+    artifact.url = crate::common::custom_update_rewrite_artifact_url(&artifact.url);
+    Ok(artifact)
 }
 
 fn fetch_update_sidecar_bytes(url: &str) -> ResultType<Vec<u8>> {
@@ -157,16 +169,10 @@ fn read_limited_response_bytes<R: Read>(
 
 pub fn get_update_download_file_from_url(url: &str) -> Option<PathBuf> {
     let parsed = url::Url::parse(url).ok()?;
-    // Check the raw prefix before Url normalizes default ports.
-    if !url.starts_with("https://github.com/")
-        || parsed.scheme() != "https"
-        || parsed.host_str() != Some("github.com")
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-        || parsed.port().is_some()
-        || parsed.query().is_some()
-        || parsed.fragment().is_some()
-    {
+    // custom: accept only the configured update server (host and port must
+    // match UP_SERVER_URL, or the github.com fallback), with no credentials,
+    // explicit-port mismatch, query or fragment.
+    if !crate::common::is_trusted_update_url(url) {
         return None;
     }
 
@@ -214,11 +220,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn update_download_file_accepts_expected_github_asset_urls() {
-        let file = get_update_download_file_from_url(
-            "https://github.com/yonfei6/rustdesk/releases/download/1.4.0/rustdesk-1.4.0-x86_64.dmg",
-        )
-        .expect("valid GitHub release asset URL");
+    fn update_download_file_accepts_expected_release_asset_urls() {
+        // custom: derive from the configured update server so the test passes
+        // both with and without UP_SERVER_URL injected at build time.
+        let asset_url = format!(
+            "{}/yonfei6/rustdesk/releases/download/1.4.0/rustdesk-1.4.0-x86_64.dmg",
+            crate::common::custom_update_server_base()
+        );
+        let file = get_update_download_file_from_url(&asset_url)
+            .expect("valid release asset URL");
 
         assert_eq!(
             file.file_name().and_then(|name| name.to_str()),
