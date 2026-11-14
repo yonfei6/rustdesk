@@ -2209,9 +2209,10 @@ jobs:
                 sed -i "s/linux\/x64/linux\/arm64/g" ./res/rpm-flutter.spec
                 ;;
             esac
-            # custom: spec 里的 Version 是硬编码的，不跟 VERSION 走，
-            # 否则 1.5.4 的 rpm 包名仍是 rustdesk-1.5.3-0.*.rpm，Linux 用户看不到升级
-            sed -i "s/^Version:.*/Version:    ${VERSION}/" ./res/rpm-flutter.spec ./res/rpm-flutter-suse.spec
+            # custom: spec 里的 Version 硬编码为 1.5.3，不跟 VERSION 走，否则 rpm 包名错位。
+            # 必须用 ${{ env.VERSION }}（runner 侧展开）：这段脚本在 run-on-arch 的 docker
+            # 容器里跑，workflow 级 env 不会传进去，写 ${VERSION} 会因 set -u 报 unbound variable。
+            sed -i "s/^Version:.*/Version:    ${{ env.VERSION }}/" ./res/rpm-flutter.spec ./res/rpm-flutter-suse.spec
             HBB=`pwd` rpmbuild ./res/rpm-flutter.spec -bb
             pushd ~/rpmbuild/RPMS/${{ matrix.job.arch }}
             for name in rustdesk*??.rpm; do
