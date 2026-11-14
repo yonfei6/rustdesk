@@ -27,12 +27,14 @@ const METADATA_SCHEMA_VERSION: u32 = 1;
 const SIGNATURE_SCHEMA_VERSION: u32 = 1;
 const SIGNATURE_ALGORITHM: &str = "ed25519";
 
+// custom: trust only our own update signing key (see .workbuddy key + repo secret
+// RUSTDESK_UPDATE_ED25519_SEED), so official RustDesk metadata can never be accepted.
 const TRUSTED_UPDATE_KEYS: &[TrustedUpdateKey] = &[TrustedUpdateKey {
     key_id: "2026-ed25519-main",
     algorithm: SIGNATURE_ALGORITHM,
     public_key: [
-        52, 214, 32, 65, 191, 134, 137, 75, 157, 74, 67, 221, 150, 161, 118, 215, 218, 35, 236,
-        156, 127, 120, 133, 156, 197, 141, 37, 22, 47, 106, 181, 177,
+        250, 177, 197, 247, 76, 113, 98, 52, 7, 219, 95, 66, 183, 225, 16, 183, 113, 151, 114,
+        211, 40, 129, 1, 173, 152, 151, 218, 113, 184, 142, 25, 137,
     ],
 }];
 

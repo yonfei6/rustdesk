@@ -1096,11 +1096,12 @@ pub(crate) fn release_id_from_update_url(update_url: &str) -> ResultType<String>
         bail!("Update URL has no path: {}", update_url);
     };
     let segments = segments.collect::<Vec<_>>();
+    // custom: only our own fork releases are accepted as update sources.
     let release_id = match segments.as_slice() {
-        ["rustdesk", "rustdesk", "releases", "tag", release_id] => *release_id,
-        ["rustdesk", "rustdesk", "releases", "tag", release_id, ""] => *release_id,
+        ["yonfei6", "rustdesk", "releases", "tag", release_id] => *release_id,
+        ["yonfei6", "rustdesk", "releases", "tag", release_id, ""] => *release_id,
         _ => bail!(
-            "Update URL is not a RustDesk release tag URL: {}",
+            "Update URL is not a custom RustDesk release tag URL: {}",
             update_url
         ),
     };
@@ -1150,9 +1151,26 @@ fn clear_software_update_url() {
     *update_url = String::new();
 }
 
+// custom: update checks read our own fork's releases instead of api.rustdesk.com.
+const CUSTOM_UPDATE_RELEASES_API: &str =
+    "https://api.github.com/repos/yonfei6/rustdesk/releases?per_page=30";
+const CUSTOM_UPDATE_RELEASE_TAG_URL_PREFIX: &str =
+    "https://github.com/yonfei6/rustdesk/releases/tag/";
+
 fn process_software_update_check_response(bytes: Bytes) -> ResultType<()> {
-    let resp: hbb_common::VersionCheckResponse = serde_json::from_slice(&bytes)?;
-    let response_url = resp.url;
+    // custom: the response is a GitHub releases list, pick the newest non-draft entry.
+    let releases: Vec<Value> = serde_json::from_slice(&bytes)?;
+    let Some(release) = releases
+        .iter()
+        .find(|release| release.get("draft").and_then(Value::as_bool) != Some(true))
+    else {
+        clear_software_update_url();
+        return Ok(());
+    };
+    let Some(tag) = release.get("tag_name").and_then(Value::as_str) else {
+        bail!("custom update check: GitHub release has no tag_name");
+    };
+    let response_url = format!("{}{}", CUSTOM_UPDATE_RELEASE_TAG_URL_PREFIX, tag.trim());
     let release_id = release_id_from_update_url(&response_url)?;
     let latest_release_version = display_version_from_release_id(&release_id)?;
 
@@ -1174,25 +1192,35 @@ fn process_software_update_check_response(bytes: Bytes) -> ResultType<()> {
 }
 
 // No need to check `danger_accept_invalid_cert` for now.
-// Because the url is always `https://api.rustdesk.com/version/latest`.
+// custom: the url is always the GitHub API of our own fork.
 #[tokio::main(flavor = "current_thread")]
 pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
-    let (request, url) =
-        hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_CLIENT.to_string());
+    let url = CUSTOM_UPDATE_RELEASES_API.to_owned();
     let proxy_conf = Config::get_socks();
     let tls_url = get_url_for_tls(&url, &proxy_conf);
     let tls_type = get_cached_tls_type(tls_url);
     let is_tls_not_cached = tls_type.is_none();
     let tls_type = tls_type.unwrap_or(TlsType::Rustls);
     let client = create_http_client_async(tls_type, false);
-    let latest_release_response: ResultType<_> = match client.post(&url).json(&request).send().await
+    let latest_release_response: ResultType<_> = match client
+        .get(&url)
+        .header("User-Agent", "rustdesk-custom-update-check")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
     {
         Ok(resp) => Ok((tls_type, resp)),
         Err(err) => {
             if is_tls_not_cached && err.is_request() {
                 let tls_type = TlsType::NativeTls;
                 let client = create_http_client_async(tls_type, false);
-                match client.post(&url).json(&request).send().await {
+                match client
+                    .get(&url)
+                    .header("User-Agent", "rustdesk-custom-update-check")
+                    .header("Accept", "application/vnd.github+json")
+                    .send()
+                    .await
+                {
                     Ok(resp) => Ok((tls_type, resp)),
                     Err(err) => Err(err.into()),
                 }
@@ -1306,7 +1334,8 @@ fn get_api_server_(api: String, custom: String) -> String {
             return format!("http://{}", s);
         }
     }
-    "https://admin.rustdesk.com".to_owned()
+    // custom: no official API server fallback (build always sets API_SERVER / rendezvous server).
+    String::new()
 }
 
 #[inline]
@@ -3118,7 +3147,7 @@ mod tests {
 
     #[test]
     fn parses_stable_rustdesk_release_url() {
-        let update_url = "https://github.com/rustdesk/rustdesk/releases/tag/v1.4.6";
+        let update_url = "https://github.com/yonfei6/rustdesk/releases/tag/v1.4.6";
 
         assert_eq!(release_id_from_update_url(update_url).unwrap(), "v1.4.6");
         assert_eq!(display_version_from_release_id("v1.4.6").unwrap(), "1.4.6");
@@ -3132,6 +3161,8 @@ mod tests {
     fn rejects_untrusted_release_urls_and_unstable_versions() {
         for update_url in [
             "http://github.com/rustdesk/rustdesk/releases/tag/v1.4.6",
+            // custom: the official repository must no longer be accepted.
+            "https://github.com/rustdesk/rustdesk/releases/tag/v1.4.6",
             "https://github.com:8443/rustdesk/rustdesk/releases/tag/v1.4.6",
             "https://github.com:443/rustdesk/rustdesk/releases/tag/v1.4.6",
             "https://user@github.com/rustdesk/rustdesk/releases/tag/v1.4.6",
