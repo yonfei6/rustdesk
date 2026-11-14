@@ -543,9 +543,21 @@ impl Connection {
         let _raii_control_permissions_id =
             raii::ControlPermissionsID::new(id, &control_permissions);
         let salt = Config::get_effective_permanent_password_salt();
+        // custom: advertise the preset salt so our client can send a second
+        // login response. Empty means "no usable preset password" and keeps
+        // legacy single-response clients working unchanged.
+        let (preset_storage, preset_salt) = Config::get_preset_password_storage_and_salt();
+        let preset_salt = if !preset_salt.is_empty()
+            && preset_permanent_password_storage_is_usable_for_auth(&preset_storage, &preset_salt)
+        {
+            preset_salt
+        } else {
+            String::new()
+        };
         let hash = Hash {
             salt,
             challenge: Config::get_auto_password(6),
+            preset_salt,
             ..Default::default()
         };
         let (tx_from_cm_holder, mut rx_from_cm) = mpsc::unbounded_channel::<ipc::Data>();
@@ -2518,7 +2530,29 @@ impl Connection {
         self.input_key(key_event, true);
     }
 
-    fn verify_h1(&self, h1: &[u8]) -> bool {
+    // custom: the login response may carry two 32-byte halves computed with two
+    // different salts: [0..32] for the local (or temporary) password and
+    // [32..64] for the compiled-in preset password. Legacy clients send a
+    // single half, which both accessors return as-is.
+    fn primary_login_response(&self) -> &[u8] {
+        let resp = &self.lr.password[..];
+        if resp.len() == 64 {
+            &resp[..32]
+        } else {
+            resp
+        }
+    }
+
+    fn preset_login_response(&self) -> &[u8] {
+        let resp = &self.lr.password[..];
+        if resp.len() == 64 {
+            &resp[32..]
+        } else {
+            resp
+        }
+    }
+
+    fn verify_h1_with_response(&self, h1: &[u8], response: &[u8]) -> bool {
         let mut hasher2 = Sha256::new();
         hasher2.update(h1);
         hasher2.update(self.hash.challenge.as_bytes());
@@ -2526,7 +2560,11 @@ impl Connection {
         // bytes matched via timing. In typical remote scenarios this is difficult to exploit due to network
         // jitter, changing challenges, and login attempt throttling, but a constant-time comparison here is
         // low-cost defensive programming.
-        constant_time_eq(&hasher2.finalize()[..], &self.lr.password[..])
+        constant_time_eq(&hasher2.finalize()[..], response)
+    }
+
+    fn verify_h1(&self, h1: &[u8]) -> bool {
+        self.verify_h1_with_response(h1, self.primary_login_response())
     }
 
     fn validate_password_plain(&self, password: &str) -> bool {
@@ -2563,7 +2601,8 @@ impl Connection {
         let Some(h1) = decode_preset_password_h1_from_storage(storage) else {
             return false;
         };
-        self.verify_h1(&h1[..])
+        // custom: the preset password owns the second half of a dual response.
+        self.verify_h1_with_response(&h1[..], self.preset_login_response())
     }
 
     // This is coarse brute-force protection for the current temporary password value.
@@ -2632,6 +2671,10 @@ impl Connection {
                 return true;
             }
         }
+        let (local_storage, local_salt) =
+            Config::get_local_permanent_password_storage_and_salt();
+        let local_configured = !local_storage.is_empty();
+
         if password::permanent_enabled() || allow_permanent_password {
             let print_fallback = || {
                 if allow_permanent_password && !password::permanent_enabled() {
@@ -2640,9 +2683,7 @@ impl Connection {
             };
             // Strictly check storage usability before auth so malformed encrypted/hash storage
             // cannot fall back to being accepted as legacy plaintext.
-            let (local_storage, local_salt) =
-                Config::get_local_permanent_password_storage_and_salt();
-            if !local_storage.is_empty() {
+            if local_configured {
                 if local_permanent_password_storage_is_usable_for_auth(&local_storage, &local_salt)
                     && self.validate_password_storage(&local_storage)
                 {
@@ -2650,7 +2691,11 @@ impl Connection {
                     print_fallback();
                     return true;
                 }
-            } else {
+            } else if !password::temporary_enabled() {
+                // custom: "permanent password only" mode but no permanent password is
+                // configured. Accept the preset password here so the machine cannot be
+                // locked out. As soon as a permanent password exists this branch is
+                // unreachable, so the preset password really is disabled in that mode.
                 let (hard, salt) = Config::get_preset_password_storage_and_salt();
                 if preset_permanent_password_storage_is_usable_for_auth(&hard, &salt)
                     && self.validate_preset_password_storage(&hard, &salt)
@@ -2659,6 +2704,20 @@ impl Connection {
                     print_fallback();
                     return true;
                 }
+            }
+        }
+
+        // custom: the preset password rides on the temporary-password modes, so it
+        // stays usable with or without a local permanent password in "temporary only"
+        // and "both". In "permanent only" mode it is deliberately disabled above.
+        if password::temporary_enabled() {
+            let (hard, salt) = Config::get_preset_password_storage_and_salt();
+            if preset_permanent_password_storage_is_usable_for_auth(&hard, &salt)
+                && self.validate_preset_password_storage(&hard, &salt)
+            {
+                self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::PermanentPassword);
+                self.check_update_temporary_password(true);
+                return true;
             }
         }
         false

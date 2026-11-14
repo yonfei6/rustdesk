@@ -4636,6 +4636,52 @@ async fn request_local_switch_sides_uuid(
     }
 }
 
+// custom: dual-channel login helpers -----------------------------------------
+// Our builds advertise `hash.preset_salt`. When it is present the login
+// response is 64 bytes: [local password response | preset password response],
+// each half computed with its own salt. Peers without `preset_salt` keep
+// receiving the legacy single 32-byte response.
+fn login_h1_of(secret: &[u8], salt: &str) -> Vec<u8> {
+    if secret.is_empty() || salt.is_empty() {
+        return Vec::new();
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(secret);
+    hasher.update(salt.as_bytes());
+    hasher.finalize()[..].to_vec()
+}
+
+fn login_response_of(h1: &[u8], challenge: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(h1);
+    hasher.update(challenge.as_bytes());
+    let out = hasher.finalize();
+    let mut buf = [0u8; 32];
+    buf.copy_from_slice(&out);
+    buf
+}
+
+fn build_login_response(local_h1: &[u8], preset_secret: &[u8], hash: &Hash) -> Vec<u8> {
+    let local = if local_h1.len() == 32 {
+        Some(login_response_of(local_h1, &hash.challenge))
+    } else {
+        None
+    };
+    if hash.preset_salt.is_empty() {
+        return local.map(|v| v.to_vec()).unwrap_or_default();
+    }
+    let preset_h1 = login_h1_of(preset_secret, &hash.preset_salt);
+    let preset = if preset_h1.len() == 32 {
+        login_response_of(&preset_h1, &hash.challenge)
+    } else {
+        [0u8; 32]
+    };
+    let mut out = Vec::with_capacity(64);
+    out.extend_from_slice(&local.unwrap_or([0u8; 32]));
+    out.extend_from_slice(&preset);
+    out
+}
+
 /// Handle hash message sent by peer.
 /// Hash will be used for login.
 ///
@@ -4762,17 +4808,14 @@ pub async fn handle_hash(
         return true;
     }
 
-    let password = if password.is_empty() {
+    let password = if password.is_empty() && password_preset.is_empty() {
         // login without password, the remote side can click accept
         if !request_approval {
             interface.msgbox("input-password", "Password Required", "", "");
         }
         Vec::new()
     } else {
-        let mut hasher = Sha256::new();
-        hasher.update(&password);
-        hasher.update(&hash.challenge);
-        hasher.finalize()[..].into()
+        build_login_response(&password, password_preset.as_bytes(), &hash)
     };
 
     if request_approval {
@@ -4882,17 +4925,27 @@ pub async fn handle_login_from_ui(
     } else {
         lc.write().unwrap().password_source = Default::default();
         let mut hasher = Sha256::new();
-        hasher.update(password);
+        // custom: borrow, the typed value is still needed for the preset half.
+        hasher.update(&password);
         hasher.update(&lc.read().unwrap().hash.salt);
         let res = hasher.finalize();
         lc.write().unwrap().remember = remember;
         res[..].into()
     };
+    // custom: try the typed value against both salts. The server accepts
+    // whichever half matches, so the user does not need to know whether the
+    // value is the permanent password or the preset one.
+    let preset_secret = if password.is_empty() {
+        Vec::new()
+    } else {
+        password.as_bytes().to_vec()
+    };
     lc.write().unwrap().password = hash_password.clone();
-    let mut hasher2 = Sha256::new();
-    hasher2.update(&hash_password[..]);
-    hasher2.update(&lc.read().unwrap().hash.challenge);
-    hash_password = hasher2.finalize()[..].to_vec();
+    let hash = lc.read().unwrap().hash.clone();
+    // An empty response keeps its "no password, remote may accept" meaning.
+    if !hash_password.is_empty() || !preset_secret.is_empty() {
+        hash_password = build_login_response(&hash_password, &preset_secret, &hash);
+    }
 
     send_login(
         lc.clone(),

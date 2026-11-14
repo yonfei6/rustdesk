@@ -333,6 +333,10 @@ message CursorPosition {
 message Hash {
   string salt = 1;
   string challenge = 2;
+  // custom: salt of the compiled-in preset password. Only our own builds set
+  // this. When present, clients answer with a 64-byte login response made of
+  // two 32-byte halves, one per salt.
+  string preset_salt = 3;
 }
 
 enum ClipboardFormat {
