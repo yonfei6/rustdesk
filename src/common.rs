@@ -1136,13 +1136,27 @@ fn clear_software_update_url() {
 }
 
 // custom: 自建更新服务基地址。构建期通过环境变量 UP_SERVER_URL 注入
-// （例如 https://rustdeskup.sjfedu.cn:66，必须是纯 origin，不能带路径）。
+// （必须是纯 origin，不带路径/凭据；具体地址只配在 CI secret 里，不写进代码）。
 // 未注入或为空时回落 GitHub 官方地址，行为与改动前完全一致。
+// 容忍 secret 漏写 scheme：缺 "://" 时补 https://。否则 reqwest 在 build 阶段就
+// 报 "URL scheme is not allowed"，只在 DEBUG 日志留一行，表现为"检查更新没反应"。
 pub(crate) fn custom_update_server_base() -> &'static str {
-    match option_env!("UP_SERVER_URL") {
-        Some(url) if !url.trim().is_empty() => url.trim().trim_end_matches('/'),
-        _ => "https://github.com",
-    }
+    static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    BASE.get_or_init(|| {
+        let raw = option_env!("UP_SERVER_URL")
+            .unwrap_or_default()
+            .trim()
+            .trim_end_matches('/');
+        if raw.is_empty() {
+            "https://github.com".to_owned()
+        } else if raw.contains("://") {
+            raw.to_owned()
+        } else {
+            log::warn!("UP_SERVER_URL has no scheme, assuming https: {raw}");
+            format!("https://{raw}")
+        }
+    })
+    .as_str()
 }
 
 fn custom_update_releases_api() -> String {

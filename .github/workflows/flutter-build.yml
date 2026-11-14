@@ -26,8 +26,8 @@ env:
   RS_PUB_KEY: "${{ secrets.RS_PUB_KEY }}"
   RENDEZVOUS_SERVER: "${{ secrets.RENDEZVOUS_SERVER }}"
   API_SERVER: "${{ secrets.API_SERVER }}"
-  # custom: 自建更新服务地址（纯 origin，如 https://rustdeskup.sjfedu.cn:66），
-  # 编译期由 option_env!("UP_SERVER_URL") 读取；为空则回落 GitHub。
+  # custom: 自建更新服务地址（纯 origin，不带路径/凭据；具体地址只配在仓库 secret，
+  # 不写进代码或注释）。编译期由 option_env!("UP_SERVER_URL") 读取；为空则回落 GitHub。
   UP_SERVER_URL: "${{ secrets.UP_SERVER_URL }}"
   SCITER_RUST_VERSION: "1.75" # https://github.com/rustdesk/rustdesk/discussions/7503, also 1.78 has ABI change which causes our sciter version not working, https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
   RUST_VERSION: "1.75" # sciter failed on m1 with 1.78 because of https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
