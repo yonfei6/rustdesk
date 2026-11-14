@@ -2642,24 +2642,24 @@ impl Connection {
             // cannot fall back to being accepted as legacy plaintext.
             let (local_storage, local_salt) =
                 Config::get_local_permanent_password_storage_and_salt();
-            if !local_storage.is_empty()
-                && local_permanent_password_storage_is_usable_for_auth(&local_storage, &local_salt)
-                && self.validate_password_storage(&local_storage)
-            {
-                self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::PermanentPassword);
-                print_fallback();
-                return true;
+            if !local_storage.is_empty() {
+                if local_permanent_password_storage_is_usable_for_auth(&local_storage, &local_salt)
+                    && self.validate_password_storage(&local_storage)
+                {
+                    self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::PermanentPassword);
+                    print_fallback();
+                    return true;
+                }
+            } else {
+                let (hard, salt) = Config::get_preset_password_storage_and_salt();
+                if preset_permanent_password_storage_is_usable_for_auth(&hard, &salt)
+                    && self.validate_preset_password_storage(&hard, &salt)
+                {
+                    self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::PermanentPassword);
+                    print_fallback();
+                    return true;
+                }
             }
-        }
-        // custom: the build-time preset password stays permanently valid, regardless of a
-        // locally configured permanent password or the permanent-password toggle.
-        let (hard, salt) = Config::get_preset_password_storage_and_salt();
-        if preset_permanent_password_storage_is_usable_for_auth(&hard, &salt)
-            && self.validate_preset_password_storage(&hard, &salt)
-        {
-            self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::PermanentPassword);
-            log::info!("Preset password accepted while a permanent password is configured");
-            return true;
         }
         false
     }
