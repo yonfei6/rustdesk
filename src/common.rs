@@ -1158,21 +1158,32 @@ const CUSTOM_UPDATE_RELEASE_TAG_URL_PREFIX: &str =
     "https://github.com/yonfei6/rustdesk/releases/tag/";
 
 fn process_software_update_check_response(bytes: Bytes) -> ResultType<()> {
-    // custom: the response is a GitHub releases list, pick the newest non-draft entry.
+    // custom: the response is a GitHub releases list. Skip drafts and any release
+    // whose tag is not a stable x.y.z version (e.g. 1.4.6-0423) and take the newest
+    // usable one.
     let releases: Vec<Value> = serde_json::from_slice(&bytes)?;
-    let Some(release) = releases
-        .iter()
-        .find(|release| release.get("draft").and_then(Value::as_bool) != Some(true))
-    else {
+    let mut found: Option<(String, String)> = None;
+    for release in releases.iter() {
+        if release.get("draft").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        let Some(tag) = release.get("tag_name").and_then(Value::as_str) else {
+            continue;
+        };
+        let response_url = format!("{}{}", CUSTOM_UPDATE_RELEASE_TAG_URL_PREFIX, tag.trim());
+        let Ok(release_id) = release_id_from_update_url(&response_url) else {
+            continue;
+        };
+        let Ok(display_version) = display_version_from_release_id(&release_id) else {
+            continue;
+        };
+        found = Some((response_url, display_version));
+        break;
+    }
+    let Some((response_url, latest_release_version)) = found else {
         clear_software_update_url();
         return Ok(());
     };
-    let Some(tag) = release.get("tag_name").and_then(Value::as_str) else {
-        bail!("custom update check: GitHub release has no tag_name");
-    };
-    let response_url = format!("{}{}", CUSTOM_UPDATE_RELEASE_TAG_URL_PREFIX, tag.trim());
-    let release_id = release_id_from_update_url(&response_url)?;
-    let latest_release_version = display_version_from_release_id(&release_id)?;
 
     if get_version_number(&latest_release_version) > get_version_number(crate::VERSION) {
         #[cfg(feature = "flutter")]
