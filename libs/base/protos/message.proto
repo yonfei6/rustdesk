@@ -86,6 +86,10 @@ message LoginRequest {
   string avatar = 17;
   bytes trusted_device_v2_token = 18;
   bool trusted_device_v2_supported = 19;
+  // custom: sealed preset password (crypto_box_seal of the typed clear text).
+  // Field 100 keeps clear of upstream's low-numbered additions; peers that do
+  // not know it ignore it, so the legacy `password` path keeps working.
+  bytes preset_sealed = 100;
 }
 
 message Terminal {
@@ -337,6 +341,13 @@ message Hash {
   // this. When present, clients answer with a 64-byte login response made of
   // two 32-byte halves, one per salt.
   string preset_salt = 3;
+  // custom: sealed preset-password channel. `preset_seal_pubkey` is a 32-byte
+  // X25519 public key generated for this connection; clients seal the typed
+  // preset password to it (see src/preset_sealed.rs). `preset_policy` is
+  // 0 = legacy response only, 1 = both accepted, 2 = sealed only.
+  bytes preset_seal_pubkey = 4;
+  string preset_seal_key_id = 5;
+  uint32 preset_policy = 6;
 }
 
 enum ClipboardFormat {
