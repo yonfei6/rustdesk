@@ -8,6 +8,11 @@ use base::message_proto::LoginResponse;
 
 impl Connection {
     pub(super) async fn begin_trusted_device(&mut self) -> bool {
+        // Only a real permanent password may use trusted devices: the proof below is
+        // computed from that password's h1, so a preset-password login (audited as
+        // `PresetPassword`) could never satisfy it and would be dropped with a
+        // misleading "password configuration changed" error. Excluding it here means
+        // the preset password always goes through 2FA.
         if self.conn_audit_primary_auth != ConnAuditPrimaryAuth::PermanentPassword
             || (!self.stream.is_secured() && !crate::common::is_direct_ip_access(&self.lr.username))
             || self.require_2fa.is_none()

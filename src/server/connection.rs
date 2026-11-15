@@ -315,6 +315,12 @@ enum ConnAuditPrimaryAuth {
     TemporaryPassword = 2,
     PermanentPassword = 3,
     SwitchSides = 4,
+    /// custom: the compiled-in preset password, presented through the sealed
+    /// channel. Kept apart from `PermanentPassword` on purpose: trusted devices
+    /// key their proof on the local permanent password, so a preset login could
+    /// never satisfy it. It also makes the audit log say which credential was
+    /// used instead of blaming the permanent password.
+    PresetPassword = 5,
 }
 
 impl ConnAuditPrimaryAuth {
@@ -2758,7 +2764,7 @@ impl Connection {
                 if preset_permanent_password_storage_is_usable_for_auth(&hard, &salt)
                     && self.validate_preset_password_storage(&hard, &salt)
                 {
-                    self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::PermanentPassword);
+                    self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::PresetPassword);
                     print_fallback();
                     return true;
                 }
@@ -2773,7 +2779,7 @@ impl Connection {
             if preset_permanent_password_storage_is_usable_for_auth(&hard, &salt)
                 && self.validate_preset_password_storage(&hard, &salt)
             {
-                self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::PermanentPassword);
+                self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::PresetPassword);
                 self.check_update_temporary_password(true);
                 return true;
             }
