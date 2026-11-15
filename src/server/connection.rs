@@ -2602,8 +2602,13 @@ impl Connection {
     }
 
     fn validate_preset_password_storage(&self, storage: &str, salt: &str) -> bool {
+        // custom: no salt means this build carries no preset password at all.
+        // `HARD_SETTINGS` is hashed-only, so this cannot be reached by a build
+        // that shipped one; returning `false` here keeps a salt-less storage from
+        // degrading into a clear text comparison, which would bypass the sealed
+        // box entirely.
         if salt.is_empty() {
-            return self.validate_password_plain(storage);
+            return false;
         }
         let Some(h1) = decode_preset_password_h1_from_storage(storage) else {
             return false;

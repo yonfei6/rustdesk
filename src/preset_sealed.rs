@@ -25,6 +25,11 @@
 //! then opens the box. There is no policy negotiation and no feature flag —
 //! every build behaves the same.
 //!
+//! A build compiled without both `MY_PASSWORD_HASH` and `MY_PASSWORD_SALT` has no
+//! preset password whatsoever: the host generates no key pair, advertises no
+//! public key, and refuses the channel. It never falls back to comparing clear
+//! text, so there is no downgrade path to lose.
+//!
 //! Design constraints that must not be relaxed:
 //!
 //! * The body binds the connection's `challenge` and the host key fingerprint,
