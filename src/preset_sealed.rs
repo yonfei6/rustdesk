@@ -40,7 +40,7 @@
 
 use hbb_common::sodiumoxide::crypto::hash::sha256;
 use hbb_common::sodiumoxide::crypto::box_;
-use hbb_common::sodiumoxide::utils;
+use hbb_common::sodiumoxide::{randombytes, utils};
 
 /// Bytes of the key fingerprint carried inside the sealed body.
 pub const FP_LEN: usize = 16;
