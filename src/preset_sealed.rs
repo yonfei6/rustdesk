@@ -19,11 +19,13 @@
 //! then compares `sha256(plain ‖ preset_salt)` against the stored `h1` in
 //! constant time. See the call sites in `server/connection.rs`.
 //!
+//! This channel runs *beside* the legacy one, it does not replace it: the client
+//! sends both, and the host only falls back to this one when the legacy
+//! `sha256(h1 ‖ challenge)` half did not match. There is no policy negotiation
+//! and no feature flag — the behaviour is the same in every build.
+//!
 //! Design constraints that must not be relaxed:
 //!
-//! * `POLICY` is a compile-time constant, never read from config or env at
-//!   runtime. Downgrading to the legacy `sha256(h1 ‖ challenge)` response has to
-//!   go through a build, so it cannot be flipped on a deployed machine.
 //! * The body binds the connection's `challenge` and the host key fingerprint,
 //!   so a captured box cannot be replayed on another connection and a box sealed
 //!   for a different host key cannot be opened here.
@@ -31,30 +33,15 @@
 //!   password length.
 //! * Clear text lives in [`Secret`], which wipes its buffer on drop.
 
-// Not wired into the login flow by this commit; the follow-ups consume it.
+// Wired into the login flow by the server/client sides; kept here as a
+// self-contained unit so the sealing rules stay auditable in one place.
 #![allow(dead_code)]
 
 use hbb_common::sodiumoxide::crypto::hash::sha256;
 use hbb_common::sodiumoxide::crypto::box_;
 use hbb_common::sodiumoxide::{randombytes, utils};
 
-/// Legacy only: `Hash` carries no public key, the host accepts the
-/// `sha256(h1 ‖ challenge)` response (behaviour of builds before this channel).
-pub const POLICY_LEGACY: u32 = 0;
-/// Both channels accepted during a grey release.
-pub const POLICY_DUAL: u32 = 1;
-/// Sealed only: the legacy preset response is rejected, no `preset_salt` is
-/// advertised. This is the default and the value every release build ships.
-pub const POLICY_SEALED: u32 = 2;
-
-#[cfg(feature = "preset-legacy-only")]
-pub const POLICY: u32 = POLICY_LEGACY;
-#[cfg(all(feature = "preset-legacy", not(feature = "preset-legacy-only")))]
-pub const POLICY: u32 = POLICY_DUAL;
-#[cfg(not(any(feature = "preset-legacy", feature = "preset-legacy-only")))]
-pub const POLICY: u32 = POLICY_SEALED;
-
-/// Bytes of the key fingerprint carried inside the sealed body and in `Hash`.
+/// Bytes of the key fingerprint carried inside the sealed body.
 pub const FP_LEN: usize = 16;
 const MAGIC: &[u8; 4] = b"RSPW";
 const VERSION: u8 = 1;
@@ -115,14 +102,6 @@ fn fingerprint(pk: &[u8; box_::PUBLICKEYBYTES]) -> [u8; FP_LEN] {
     fp
 }
 
-fn hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push_str(&format!("{:02x}", b));
-    }
-    out
-}
-
 fn nonce() -> box_::Nonce {
     box_::Nonce::from_slice(&ZERO_NONCE).expect("zero nonce has the right length")
 }
@@ -146,12 +125,6 @@ impl HostKey {
     /// Public key to advertise in `Hash.preset_seal_pubkey`.
     pub fn public_key(&self) -> Vec<u8> {
         self.pk.0.to_vec()
-    }
-
-    /// Key id to advertise in `Hash.preset_seal_key_id`, also a log-friendly
-    /// label that never reveals the key material.
-    pub fn key_id(&self) -> String {
-        hex(&self.fp)
     }
 
     pub fn fingerprint(&self) -> [u8; FP_LEN] {
@@ -320,11 +293,10 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_is_stable_and_matches_key_id() {
+    fn fingerprint_is_stable() {
         let host = HostKey::generate();
         let pk = host.public_key();
         assert_eq!(fingerprint(&host.pk.0), host.fingerprint());
-        assert_eq!(host.key_id().len(), FP_LEN * 2);
         // The fingerprint travels inside the body; sealing to a copy of the
         // public key must therefore still open here.
         let sealed = seal_password("pw", CHALLENGE, &pk).unwrap();
@@ -337,11 +309,5 @@ mod tests {
         let sealed = seal_password("pw", CHALLENGE, &host.public_key()).unwrap();
         let opened = host.open(&sealed, CHALLENGE).unwrap();
         assert_eq!(format!("{:?}", opened), "Secret(****)");
-    }
-
-    #[cfg(not(any(feature = "preset-legacy", feature = "preset-legacy-only")))]
-    #[test]
-    fn release_builds_are_sealed_only() {
-        assert_eq!(POLICY, POLICY_SEALED);
     }
 }

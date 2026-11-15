@@ -120,6 +120,7 @@ async fn another_connection_cannot_supply_this_streams_token(
         String::new(),
         String::new(),
         vec![1; 32],
+        Vec::new(),
         &mut old_connection,
         &mut peer,
     )

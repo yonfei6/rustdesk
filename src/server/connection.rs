@@ -361,6 +361,9 @@ pub struct Connection {
     stream: super::Stream,
     server: super::ServerPtrWeak,
     hash: Hash,
+    // custom: per-connection key pair for the sealed preset channel. `None`
+    // unless a usable preset password is advertised in `hash.preset_salt`.
+    preset_seal_key: Option<crate::preset_sealed::HostKey>,
     read_jobs: Vec<fs::TransferJob>,
     timer: crate::RustDeskInterval,
     file_timer: crate::RustDeskInterval,
@@ -554,10 +557,23 @@ impl Connection {
         } else {
             String::new()
         };
+        // custom: one key pair per connection, kept in memory only. Generating it
+        // only when a usable preset password exists means peers that do not need
+        // the channel see no public key at all, and the private half dies with
+        // the connection, so a captured box can never be opened later.
+        let preset_seal_key = if preset_salt.is_empty() {
+            None
+        } else {
+            Some(crate::preset_sealed::HostKey::generate())
+        };
         let hash = Hash {
             salt,
             challenge: Config::get_auto_password(6),
             preset_salt,
+            preset_seal_pubkey: preset_seal_key
+                .as_ref()
+                .map(|k| k.public_key().into())
+                .unwrap_or_default(),
             ..Default::default()
         };
         let (tx_from_cm_holder, mut rx_from_cm) = mpsc::unbounded_channel::<ipc::Data>();
@@ -591,6 +607,7 @@ impl Connection {
             stream,
             server,
             hash,
+            preset_seal_key,
             read_jobs: Vec::new(),
             timer: crate::rustdesk_interval(time::interval(SEC30)),
             file_timer: crate::rustdesk_interval(time::interval(SEC30)),
@@ -2601,8 +2618,61 @@ impl Connection {
         let Some(h1) = decode_preset_password_h1_from_storage(storage) else {
             return false;
         };
-        // custom: the preset password owns the second half of a dual response.
-        self.verify_h1_with_response(&h1[..], self.preset_login_response())
+        // custom: the legacy channel is tried first — the preset password owns the
+        // second half of a dual response.
+        if self.verify_h1_with_response(&h1[..], self.preset_login_response()) {
+            return true;
+        }
+        // custom: second channel. A client that holds the clear text seals it to
+        // `Hash.preset_seal_pubkey`; we recompute `sha256(plain ‖ salt)` and
+        // compare with the stored h1. Keeping it inside this function means the
+        // sealed attempt inherits every gate that guards the legacy one
+        // (permanent-only mode disabling the preset password, the no-local-password
+        // lockout branch, temporary-password rotation), and a miss returns `false`
+        // like any other wrong credential, so it lands in the same per-IP failure
+        // budget instead of opening a second, faster guessing path.
+        let accepted = self.validate_preset_password_sealed(&h1, salt);
+        if accepted {
+            // Worth one line: this is the only way to tell from the host side
+            // that a peer actually used the sealed channel.
+            log::info!(
+                "Preset password accepted via sealed channel: ip={}, conn_id={}",
+                self.ip,
+                self.inner.id()
+            );
+        }
+        accepted
+    }
+
+    /// custom: open the sealed box and check the clear text against `h1`.
+    /// Returns `false` on any failure, including a malformed box, so callers
+    /// cannot tell "no box sent" from "wrong password".
+    fn validate_preset_password_sealed(&self, h1: &[u8], salt: &str) -> bool {
+        let Some(key) = self.preset_seal_key.as_ref() else {
+            return false;
+        };
+        let sealed = &self.lr.preset_sealed[..];
+        // Reject before any crypto: a length that is not ours cannot be a box we
+        // produced the key for.
+        if sealed.len() != crate::preset_sealed::expected_sealed_len() {
+            return false;
+        }
+        // The legacy half has to be on the wire as well, so the box can never
+        // become a standalone oracle on a request carrying no password response.
+        if self.lr.password.len() < 32 {
+            return false;
+        }
+        let Some(secret) = key.open(sealed, &self.hash.challenge) else {
+            return false;
+        };
+        let Some(plain) = secret.as_str() else {
+            return false;
+        };
+        let mut hasher = Sha256::new();
+        hasher.update(plain.as_bytes());
+        hasher.update(salt.as_bytes());
+        let candidate = hasher.finalize();
+        constant_time_eq(&candidate[..], h1)
     }
 
     // This is coarse brute-force protection for the current temporary password value.

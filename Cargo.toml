@@ -27,12 +27,6 @@ use_rubato = ["rubato"]
 use_dasp = ["dasp"]
 flutter = ["flutter_rust_bridge"]
 default = ["use_dasp"]
-# custom: preset password channel policy (see src/preset_sealed.rs). Release
-# builds use the default = sealed only. Enable exactly one of these to build a
-# grey-release package that still accepts the legacy `sha256(h1 ‖ challenge)`
-# response; neither can be toggled at runtime.
-preset-legacy = []
-preset-legacy-only = []
 hwcodec = ["scrap/hwcodec"]
 vram = ["scrap/vram"]
 mediacodec = ["scrap/mediacodec"]

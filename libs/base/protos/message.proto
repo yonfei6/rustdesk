@@ -341,13 +341,12 @@ message Hash {
   // this. When present, clients answer with a 64-byte login response made of
   // two 32-byte halves, one per salt.
   string preset_salt = 3;
-  // custom: sealed preset-password channel. `preset_seal_pubkey` is a 32-byte
-  // X25519 public key generated for this connection; clients seal the typed
-  // preset password to it (see src/preset_sealed.rs). `preset_policy` is
-  // 0 = legacy response only, 1 = both accepted, 2 = sealed only.
+  // custom: sealed preset-password channel that runs beside `preset_salt`.
+  // `preset_seal_pubkey` is a 32-byte X25519 public key generated for this
+  // connection; clients seal the typed password to it (src/preset_sealed.rs)
+  // and put the box in LoginRequest.preset_sealed. The host only tries it after
+  // the legacy `preset_salt` half did not match.
   bytes preset_seal_pubkey = 4;
-  string preset_seal_key_id = 5;
-  uint32 preset_policy = 6;
 }
 
 enum ClipboardFormat {

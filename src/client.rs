@@ -4661,6 +4661,19 @@ fn login_response_of(h1: &[u8], challenge: &str) -> [u8; 32] {
     buf
 }
 
+/// custom: seal the typed clear text for the peer's per-connection key, as the
+/// second preset channel. Returns an empty vector when the peer advertises no
+/// key (older host, or no usable preset password) or when the caller holds no
+/// clear text (restored password, auto reconnect); an empty value makes the
+/// whole channel a no-op on both sides instead of sending an empty box.
+fn seal_preset_password(secret: &str, hash: &Hash) -> Vec<u8> {
+    if secret.is_empty() || hash.preset_seal_pubkey.is_empty() {
+        return Vec::new();
+    }
+    crate::preset_sealed::seal_password(secret, &hash.challenge, &hash.preset_seal_pubkey[..])
+        .unwrap_or_default()
+}
+
 fn build_login_response(local_h1: &[u8], preset_secret: &[u8], hash: &Hash) -> Vec<u8> {
     let local = if local_h1.len() == 32 {
         Some(login_response_of(local_h1, &hash.challenge))
@@ -4817,6 +4830,7 @@ pub async fn handle_hash(
     } else {
         build_login_response(&password, password_preset.as_bytes(), &hash)
     };
+    let preset_sealed = seal_preset_password(password_preset, &hash);
 
     if request_approval {
         interface.msgbox(
@@ -4832,6 +4846,7 @@ pub async fn handle_hash(
         String::new(),
         String::new(),
         password,
+        preset_sealed,
         trust,
         peer,
     )
@@ -4883,13 +4898,22 @@ async fn send_login(
     os_username: String,
     os_password: String,
     password: Vec<u8>,
+    preset_sealed: Vec<u8>,
     trust: &mut crate::trusted_devices::client::Session,
     peer: &mut Stream,
 ) -> ResultType<()> {
-    let msg_out = lc
+    let mut msg_out = lc
         .read()
         .unwrap()
         .create_login_msg(os_username, os_password, password);
+    // custom: the second preset channel travels beside the legacy response, so a
+    // host that does not know the field simply ignores it and a host that cannot
+    // match the legacy half gets one more chance with the sealed clear text.
+    if !preset_sealed.is_empty() {
+        if let Some(message::Union::LoginRequest(lr)) = msg_out.union.as_mut() {
+            lr.preset_sealed = preset_sealed.into();
+        }
+    }
     let msg_out = trust.login(msg_out).await?;
     peer.send(&msg_out).await
 }
@@ -4946,12 +4970,16 @@ pub async fn handle_login_from_ui(
     if !hash_password.is_empty() || !preset_secret.is_empty() {
         hash_password = build_login_response(&hash_password, &preset_secret, &hash);
     }
+    // custom: only a typed value can be sealed; a password restored from config
+    // is already hashed, so it rides the legacy channel alone.
+    let preset_sealed = seal_preset_password(&password, &hash);
 
     send_login(
         lc.clone(),
         os_username,
         os_password,
         hash_password,
+        preset_sealed,
         trust,
         peer,
     )
