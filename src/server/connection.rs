@@ -552,15 +552,12 @@ impl Connection {
         let _raii_control_permissions_id =
             raii::ControlPermissionsID::new(id, &control_permissions);
         let salt = Config::get_effective_permanent_password_salt();
-        // custom: advertise the preset salt so our client can send a second
-        // login response. Empty means "no usable preset password" and keeps
-        // legacy single-response clients working unchanged.
-        let (preset_storage, preset_salt) = Config::get_preset_password_storage_and_salt();
-        // custom: the preset salt is never advertised any more. It stays on the
-        // host, where it turns the sealed clear text into the stored h1; the
+        // custom: the preset salt is never advertised to the client. It stays on
+        // the host, where it turns the sealed clear text into the stored h1; the
         // client only receives the public key. Dropping it from `Hash` is what
         // makes the legacy preset path fail by construction, which is the whole
         // point of routing the preset password through the sealed box.
+        let (preset_storage, preset_salt) = Config::get_preset_password_storage_and_salt();
         let preset_usable = !preset_salt.is_empty()
             && preset_permanent_password_storage_is_usable_for_auth(&preset_storage, &preset_salt);
         // custom: one key pair per connection, kept in memory only. Generating it
@@ -2619,12 +2616,12 @@ impl Connection {
         // makes "first channel fails, second channel decides" true by
         // construction rather than by luck.
         //
-        // Living inside this function also means the sealed attempt inherits
-        // every gate that guards the preset password (permanent-only mode
-        // disabling it, the no-local-password lockout branch, temporary-password
-        // rotation), and a miss returns `false` like any other wrong credential,
-        // so it lands in the same per-IP failure budget instead of opening a
-        // second, faster guessing path.
+        // The caller (`validate_password`) invokes this last and without any mode
+        // gate, so the sealed attempt is reached whenever the temporary and
+        // permanent passwords did not match. A miss returns `false` like any other
+        // wrong credential, so all three channels share the single per-IP failure
+        // budget instead of the sealed box opening a second, unthrottled guessing
+        // path.
         let accepted = self.validate_preset_password_sealed(&h1, salt);
         if accepted {
             // Worth one line: this is the only way to tell from the host side
@@ -2755,34 +2752,23 @@ impl Connection {
                     print_fallback();
                     return true;
                 }
-            } else if !password::temporary_enabled() {
-                // custom: "permanent password only" mode but no permanent password is
-                // configured. Accept the preset password here so the machine cannot be
-                // locked out. As soon as a permanent password exists this branch is
-                // unreachable, so the preset password really is disabled in that mode.
-                let (hard, salt) = Config::get_preset_password_storage_and_salt();
-                if preset_permanent_password_storage_is_usable_for_auth(&hard, &salt)
-                    && self.validate_preset_password_storage(&hard, &salt)
-                {
-                    self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::PresetPassword);
-                    print_fallback();
-                    return true;
-                }
             }
         }
 
-        // custom: the preset password rides on the temporary-password modes, so it
-        // stays usable with or without a local permanent password in "temporary only"
-        // and "both". In "permanent only" mode it is deliberately disabled above.
-        if password::temporary_enabled() {
-            let (hard, salt) = Config::get_preset_password_storage_and_salt();
-            if preset_permanent_password_storage_is_usable_for_auth(&hard, &salt)
-                && self.validate_preset_password_storage(&hard, &salt)
-            {
-                self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::PresetPassword);
-                self.check_update_temporary_password(true);
-                return true;
-            }
+        // custom: the preset password is the last resort and is deliberately not
+        // gated on any verification mode. The first channel always fails for it —
+        // `Hash` no longer carries a preset salt, so the client can only produce a
+        // response against `hash.salt` — which leaves the sealed box as the only
+        // way in. Running it unconditionally is what makes "legacy fails, sealed
+        // decides" hold in every mode, including "permanent password only".
+        let (hard, salt) = Config::get_preset_password_storage_and_salt();
+        if preset_permanent_password_storage_is_usable_for_auth(&hard, &salt)
+            && self.validate_preset_password_storage(&hard, &salt)
+        {
+            self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::PresetPassword);
+            // No-op unless the temporary password is enabled; safe to call always.
+            self.check_update_temporary_password(true);
+            return true;
         }
         false
     }
