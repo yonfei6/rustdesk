@@ -337,15 +337,16 @@ message CursorPosition {
 message Hash {
   string salt = 1;
   string challenge = 2;
-  // custom: salt of the compiled-in preset password. Only our own builds set
-  // this. When present, clients answer with a 64-byte login response made of
-  // two 32-byte halves, one per salt.
-  string preset_salt = 3;
-  // custom: sealed preset-password channel that runs beside `preset_salt`.
-  // `preset_seal_pubkey` is a 32-byte X25519 public key generated for this
-  // connection; clients seal the typed password to it (src/preset_sealed.rs)
-  // and put the box in LoginRequest.preset_sealed. The host only tries it after
-  // the legacy `preset_salt` half did not match.
+  // custom: the preset salt used to travel here (field 3) so clients could
+  // answer with a second hash half. It is deliberately not sent any more: the
+  // preset password now has one verification path only, the sealed box below, so
+  // the legacy half must fail by construction. The salt stays on the host, where
+  // it turns the sealed clear text into the stored h1.
+  reserved 3;
+  // custom: 32-byte X25519 public key generated for this connection. Clients
+  // seal the typed password to it (src/preset_sealed.rs) and put the box in
+  // LoginRequest.preset_sealed; the host opens it only after the normal password
+  // response failed.
   bytes preset_seal_pubkey = 4;
 }
 

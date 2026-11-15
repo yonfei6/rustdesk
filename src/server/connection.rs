@@ -362,7 +362,7 @@ pub struct Connection {
     server: super::ServerPtrWeak,
     hash: Hash,
     // custom: per-connection key pair for the sealed preset channel. `None`
-    // unless a usable preset password is advertised in `hash.preset_salt`.
+    // unless a usable preset password exists on this host.
     preset_seal_key: Option<crate::preset_sealed::HostKey>,
     read_jobs: Vec<fs::TransferJob>,
     timer: crate::RustDeskInterval,
@@ -550,26 +550,25 @@ impl Connection {
         // login response. Empty means "no usable preset password" and keeps
         // legacy single-response clients working unchanged.
         let (preset_storage, preset_salt) = Config::get_preset_password_storage_and_salt();
-        let preset_salt = if !preset_salt.is_empty()
-            && preset_permanent_password_storage_is_usable_for_auth(&preset_storage, &preset_salt)
-        {
-            preset_salt
-        } else {
-            String::new()
-        };
+        // custom: the preset salt is never advertised any more. It stays on the
+        // host, where it turns the sealed clear text into the stored h1; the
+        // client only receives the public key. Dropping it from `Hash` is what
+        // makes the legacy preset path fail by construction, which is the whole
+        // point of routing the preset password through the sealed box.
+        let preset_usable = !preset_salt.is_empty()
+            && preset_permanent_password_storage_is_usable_for_auth(&preset_storage, &preset_salt);
         // custom: one key pair per connection, kept in memory only. Generating it
         // only when a usable preset password exists means peers that do not need
         // the channel see no public key at all, and the private half dies with
         // the connection, so a captured box can never be opened later.
-        let preset_seal_key = if preset_salt.is_empty() {
-            None
-        } else {
+        let preset_seal_key = if preset_usable {
             Some(crate::preset_sealed::HostKey::generate())
+        } else {
+            None
         };
         let hash = Hash {
             salt,
             challenge: Config::get_auto_password(6),
-            preset_salt,
             preset_seal_pubkey: preset_seal_key
                 .as_ref()
                 .map(|k| k.public_key().into())
@@ -2547,10 +2546,11 @@ impl Connection {
         self.input_key(key_event, true);
     }
 
-    // custom: the login response may carry two 32-byte halves computed with two
-    // different salts: [0..32] for the local (or temporary) password and
-    // [32..64] for the compiled-in preset password. Legacy clients send a
-    // single half, which both accessors return as-is.
+    // custom: our builds used to answer with 64 bytes — [local | preset] halves.
+    // The preset half is gone (its salt is no longer advertised), but clients
+    // still running that build send the long form, so keep reading the local
+    // half from it. Otherwise their permanent-password login would break on a
+    // length mismatch.
     fn primary_login_response(&self) -> &[u8] {
         let resp = &self.lr.password[..];
         if resp.len() == 64 {
@@ -2560,16 +2560,7 @@ impl Connection {
         }
     }
 
-    fn preset_login_response(&self) -> &[u8] {
-        let resp = &self.lr.password[..];
-        if resp.len() == 64 {
-            &resp[32..]
-        } else {
-            resp
-        }
-    }
-
-    fn verify_h1_with_response(&self, h1: &[u8], response: &[u8]) -> bool {
+    fn verify_h1(&self, h1: &[u8]) -> bool {
         let mut hasher2 = Sha256::new();
         hasher2.update(h1);
         hasher2.update(self.hash.challenge.as_bytes());
@@ -2577,11 +2568,7 @@ impl Connection {
         // bytes matched via timing. In typical remote scenarios this is difficult to exploit due to network
         // jitter, changing challenges, and login attempt throttling, but a constant-time comparison here is
         // low-cost defensive programming.
-        constant_time_eq(&hasher2.finalize()[..], response)
-    }
-
-    fn verify_h1(&self, h1: &[u8]) -> bool {
-        self.verify_h1_with_response(h1, self.primary_login_response())
+        constant_time_eq(&hasher2.finalize()[..], self.primary_login_response())
     }
 
     fn validate_password_plain(&self, password: &str) -> bool {
@@ -2618,19 +2605,20 @@ impl Connection {
         let Some(h1) = decode_preset_password_h1_from_storage(storage) else {
             return false;
         };
-        // custom: the legacy channel is tried first — the preset password owns the
-        // second half of a dual response.
-        if self.verify_h1_with_response(&h1[..], self.preset_login_response()) {
-            return true;
-        }
-        // custom: second channel. A client that holds the clear text seals it to
-        // `Hash.preset_seal_pubkey`; we recompute `sha256(plain ‖ salt)` and
-        // compare with the stored h1. Keeping it inside this function means the
-        // sealed attempt inherits every gate that guards the legacy one
-        // (permanent-only mode disabling the preset password, the no-local-password
-        // lockout branch, temporary-password rotation), and a miss returns `false`
-        // like any other wrong credential, so it lands in the same per-IP failure
-        // budget instead of opening a second, faster guessing path.
+        // custom: the preset password has exactly one verification path now.
+        // `Hash.preset_salt` is not advertised any more, so a client cannot
+        // compute a salt-based half for it: whatever it sends in `password` is
+        // meant for the local/temporary password and has to fail here. The sealed
+        // box is then the only way to present the preset password, which is what
+        // makes "first channel fails, second channel decides" true by
+        // construction rather than by luck.
+        //
+        // Living inside this function also means the sealed attempt inherits
+        // every gate that guards the preset password (permanent-only mode
+        // disabling it, the no-local-password lockout branch, temporary-password
+        // rotation), and a miss returns `false` like any other wrong credential,
+        // so it lands in the same per-IP failure budget instead of opening a
+        // second, faster guessing path.
         let accepted = self.validate_preset_password_sealed(&h1, salt);
         if accepted {
             // Worth one line: this is the only way to tell from the host side

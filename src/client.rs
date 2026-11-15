@@ -4636,21 +4636,10 @@ async fn request_local_switch_sides_uuid(
     }
 }
 
-// custom: dual-channel login helpers -----------------------------------------
-// Our builds advertise `hash.preset_salt`. When it is present the login
-// response is 64 bytes: [local password response | preset password response],
-// each half computed with its own salt. Peers without `preset_salt` keep
-// receiving the legacy single 32-byte response.
-fn login_h1_of(secret: &[u8], salt: &str) -> Vec<u8> {
-    if secret.is_empty() || salt.is_empty() {
-        return Vec::new();
-    }
-    let mut hasher = Sha256::new();
-    hasher.update(secret);
-    hasher.update(salt.as_bytes());
-    hasher.finalize()[..].to_vec()
-}
-
+// custom: login response helpers ---------------------------------------------
+// The response is one 32-byte half: `sha256(h1 ‖ challenge)`. The preset
+// password has no salt-based half any more — the host stopped advertising its
+// salt — so it is carried by the sealed channel alone (see seal_preset_password).
 fn login_response_of(h1: &[u8], challenge: &str) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(h1);
@@ -4674,25 +4663,19 @@ fn seal_preset_password(secret: &str, hash: &Hash) -> Vec<u8> {
         .unwrap_or_default()
 }
 
-fn build_login_response(local_h1: &[u8], preset_secret: &[u8], hash: &Hash) -> Vec<u8> {
-    let local = if local_h1.len() == 32 {
-        Some(login_response_of(local_h1, &hash.challenge))
-    } else {
-        None
-    };
-    if hash.preset_salt.is_empty() {
-        return local.map(|v| v.to_vec()).unwrap_or_default();
+fn build_login_response(local_h1: &[u8], hash: &Hash) -> Vec<u8> {
+    if local_h1.is_empty() {
+        // No credential at all: keep the "remote may ask the user to accept"
+        // meaning of an empty password field.
+        return Vec::new();
     }
-    let preset_h1 = login_h1_of(preset_secret, &hash.preset_salt);
-    let preset = if preset_h1.len() == 32 {
-        login_response_of(&preset_h1, &hash.challenge)
-    } else {
-        [0u8; 32]
-    };
-    let mut out = Vec::with_capacity(64);
-    out.extend_from_slice(&local.unwrap_or([0u8; 32]));
-    out.extend_from_slice(&preset);
-    out
+    if local_h1.len() != 32 || hash.challenge.is_empty() {
+        // A credential was offered but cannot be turned into a response (for
+        // example a value restored by an older build). Send a zero half so the
+        // peer treats it as a wrong password instead of a password-less request.
+        return vec![0u8; 32];
+    }
+    login_response_of(local_h1, &hash.challenge).to_vec()
 }
 
 /// Handle hash message sent by peer.
@@ -4828,8 +4811,10 @@ pub async fn handle_hash(
         }
         Vec::new()
     } else {
-        build_login_response(&password, password_preset.as_bytes(), &hash)
+        build_login_response(&password, &hash)
     };
+    // custom: the preset password never contributes a response half; it is only
+    // sealed, which is why the host's normal password check has to fail first.
     let preset_sealed = seal_preset_password(password_preset, &hash);
 
     if request_approval {
@@ -4956,22 +4941,15 @@ pub async fn handle_login_from_ui(
         lc.write().unwrap().remember = remember;
         res[..].into()
     };
-    // custom: try the typed value against both salts. The server accepts
-    // whichever half matches, so the user does not need to know whether the
-    // value is the permanent password or the preset one.
-    let preset_secret = if password.is_empty() {
-        Vec::new()
-    } else {
-        password.as_bytes().to_vec()
-    };
+    // custom: the typed value is no longer tried against a second salt — the
+    // host does not publish one. It is sealed instead, and the host only opens
+    // that box after the normal password response failed.
     lc.write().unwrap().password = hash_password.clone();
     let hash = lc.read().unwrap().hash.clone();
     // An empty response keeps its "no password, remote may accept" meaning.
-    if !hash_password.is_empty() || !preset_secret.is_empty() {
-        hash_password = build_login_response(&hash_password, &preset_secret, &hash);
-    }
-    // custom: only a typed value can be sealed; a password restored from config
-    // is already hashed, so it rides the legacy channel alone.
+    let hash_password = build_login_response(&hash_password, &hash);
+    // Only a typed value can be sealed; a password restored from config is
+    // already hashed and has no clear text to send.
     let preset_sealed = seal_preset_password(&password, &hash);
 
     send_login(

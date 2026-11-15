@@ -19,10 +19,11 @@
 //! then compares `sha256(plain ‖ preset_salt)` against the stored `h1` in
 //! constant time. See the call sites in `server/connection.rs`.
 //!
-//! This channel runs *beside* the legacy one, it does not replace it: the client
-//! sends both, and the host only falls back to this one when the legacy
-//! `sha256(h1 ‖ challenge)` half did not match. There is no policy negotiation
-//! and no feature flag — the behaviour is the same in every build.
+//! This is the *only* way the preset password is accepted. The host does not
+//! advertise the preset salt any more, so a client cannot build a salt-based
+//! half for it: the normal password response is expected to fail, and the host
+//! then opens the box. There is no policy negotiation and no feature flag —
+//! every build behaves the same.
 //!
 //! Design constraints that must not be relaxed:
 //!
